@@ -29,6 +29,20 @@ def is_csv_wavs_format(input_dataset_dir):
     return metadata.exists() and metadata.is_file() and wavs.exists() and wavs.is_dir()
 
 
+from cache_function import cache_output_to_pickle
+@cache_output_to_pickle()
+def process_example(audio_path, text, polyphone):
+    try:
+        if not Path(audio_path).exists():
+            print(f"audio {audio_path} not found, skipping")
+            return None
+        audio_duration = get_audio_duration(audio_path)
+        # assume tokenizer = "pinyin"  ("pinyin" | "char")
+        text = convert_char_to_pinyin([text], polyphone=polyphone)[0]
+        return audio_path, text, audio_duration
+    except:
+        return None
+
 def prepare_csv_wavs_dir(input_dir):
     assert is_csv_wavs_format(input_dir), f"not csv_wavs format: {input_dir}"
     input_dir = Path(input_dir)
@@ -38,16 +52,24 @@ def prepare_csv_wavs_dir(input_dir):
     sub_result, durations = [], []
     vocab_set = set()
     polyphone = True
-    for audio_path, text in audio_path_text_pairs:
-        if not Path(audio_path).exists():
-            print(f"audio {audio_path} not found, skipping")
-            continue
-        audio_duration = get_audio_duration(audio_path)
-        # assume tokenizer = "pinyin"  ("pinyin" | "char")
-        text = convert_char_to_pinyin([text], polyphone=polyphone)[0]
-        sub_result.append({"audio_path": audio_path, "text": text, "duration": audio_duration})
-        durations.append(audio_duration)
-        vocab_set.update(list(text))
+
+    from joblib import Parallel, delayed
+    from joblib_progress import joblib_progress
+    with joblib_progress("prepare_csv_wavs..", total=len(audio_path_text_pairs)):
+        results = Parallel(n_jobs=32)(delayed(process_example)(audio_path,text, polyphone=polyphone) for audio_path, text in audio_path_text_pairs)
+    
+    for audio_path, text in tqdm(audio_path_text_pairs):
+        try:
+            out = process_example(audio_path,text, polyphone=polyphone)
+            if out is None:
+                continue
+            audio_path, text, audio_duration = out
+            sub_result.append({"audio_path": audio_path, "text": text, "duration": audio_duration})
+            durations.append(audio_duration)
+            vocab_set.update(list(text))
+        except:
+            #print(f"could not process {audio_path}. skipping..")
+            pass
 
     return sub_result, durations, vocab_set
 

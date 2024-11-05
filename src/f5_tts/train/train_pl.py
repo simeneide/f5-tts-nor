@@ -36,17 +36,18 @@ dataset_name = "podcast"
 
 exp_name = "F5-mini" #"F5TTS_Base"  # F5TTS_Base | E2TTS_Base
 
-learning_rate = 7.5e-5
+learning_rate = 1e-4#7.5e-5
 
-batch_size_per_gpu = 38400  # Assuming frames per batch per GPU
-batch_size_type = "frame"  # "frame" or "sample"
+batch_size_per_gpu = 32 #int(38400/1000)  # Assuming frames per batch per GPU
+grad_accumulation_steps = 1#1000  # note: updates = steps / grad_accumulation_steps
+
+batch_size_type = "sample"  # "frame" or "sample"
 max_samples = 64  # max sequences per batch if use frame-wise batch_size
-grad_accumulation_steps = 1  # note: updates = steps / grad_accumulation_steps
 max_grad_norm = 1.0
 
-epochs = 1000  # use linear decay, thus epochs control the slope
-num_warmup_updates = 10000  # warmup steps
-save_per_updates = 10000  # save checkpoint per steps
+epochs = 100  # use linear decay, thus epochs control the slope
+num_warmup_updates = 2000  # warmup steps
+save_per_updates = 5000  # save checkpoint per steps
 last_per_steps = 20000  # save last checkpoint per steps
 
 # Model params
@@ -76,12 +77,16 @@ class LitCFMModel(L.LightningModule):
         self.num_warmup_updates = num_warmup_updates
         self.total_steps = total_steps
         self.max_grad_norm = max_grad_norm
-        self.save_hyperparameters()  # Saves hyperparameters for logging
+        self.save_hyperparameters(ignore=['model'])  # Saves hyperparameters for logging
 
     def forward(self, mel_spec, text_inputs, mel_lengths):
         return self.model(mel_spec, text=text_inputs, lens=mel_lengths)
     
     def training_step(self, batch, batch_idx):
+        # log learning rate
+        lr = self.trainer.optimizers[0].param_groups[0]['lr']
+        self.log('learning_rate', lr, on_step=True, on_epoch=False)
+
         return self.step(batch, phase="train")
     
     def validation_step(self, batch, batch_idx):
@@ -92,10 +97,21 @@ class LitCFMModel(L.LightningModule):
         mel_spec = batch["mel"].permute(0, 2, 1)
         mel_lengths = batch["mel_lengths"]
 
+        # oom tracking
+        bs, l, _ =  mel_spec.size()
+        s = bs*l
+        self.log("spectogram_size",s)
+
+        # Failsafe in case of big batches
+        if s > 90000:
+            print(f"found big mel spectogram (bs={bs},l={l}, bs*l= {bs*l}), skipping to avoid oom!")
+            return torch.tensor([0.0], requires_grad=True)
+        
+
         loss, cond, pred = self.model(
             mel_spec, text=text_inputs, lens=mel_lengths
         )
-        self.log(f'{phase}/loss', loss)
+        self.log(f'{phase}/loss', loss, batch_size=mel_spec.size(0))
         return loss
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.learning_rate)
@@ -161,16 +177,19 @@ def main():
                 batch_sampler=batch_sampler,
             )
             dataloaders[phase] = dl
-    # elif batch_size_type == "sample":
-    #     train_dataloader = DataLoader(
-    #         train_dataset,
-    #         collate_fn=collate_fn,
-    #         num_workers=8,
-    #         pin_memory=True,
-    #         persistent_workers=True,
-    #         batch_size=batch_size_per_gpu,
-    #         shuffle=True,
-    #     )
+    elif batch_size_type == "sample":
+        dataloaders = {}
+        for phase, ds in data_sets.items():
+            dl = DataLoader(
+                ds,
+                collate_fn=collate_fn,
+                num_workers=8,
+                pin_memory=True,
+                persistent_workers=True,
+                batch_size=batch_size_per_gpu,
+                shuffle=True if phase=="train" else False,
+            )
+            dataloaders[phase] = dl
     else:
         raise ValueError(f"batch_size_type must be either 'sample' or 'frame', but received {batch_size_type}")
 
@@ -179,15 +198,18 @@ def main():
     lit_model = LitCFMModel(model, learning_rate, num_warmup_updates, total_steps, max_grad_norm)
 
     # Initialize WandbLogger if wandb is used
-    wandb_logger = WandbLogger(project='CFM-TTS', name=exp_name, id=wandb_resume_id, resume="allow")
+    wandb_logger = WandbLogger(project='CFM-TTS', name=f"{exp_name}-lr{learning_rate}", id=wandb_resume_id, resume="allow")
 
     # Callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=str(files("f5_tts").joinpath(f"../../ckpts/{exp_name}")),
-        save_top_k=-1,
-        every_n_train_steps=save_per_updates,
-        save_last=True,
+        monitor="val/loss",
+        mode="min",
+        save_top_k=1,
+        save_last=True
     )
+
+    checkpoint_path = "/root/workdir/skrivtesnakk/F5-TTS/ckpts/F5-mini/epoch=0-step=10000.ckpt"
 
     trainer = L.Trainer(
         max_epochs=epochs,
@@ -195,16 +217,19 @@ def main():
         accumulate_grad_batches=grad_accumulation_steps,
         logger=wandb_logger,
         callbacks=[checkpoint_callback],
+        log_every_n_steps=50,
         # You can specify devices, accelerator, etc., depending on your setup
         devices="auto",
         accelerator="auto",
-        precision="bf16",
+        precision="bf16-mixed",
         val_check_interval = 2000,
+        #resume_from_checkpoint=checkpoint_path,  # Resume training from checkpoint
+
         #limit_train_batches=5,
         # Replace 'auto' with the number of GPUs if you want to specify
     )
 
-    trainer.fit(lit_model, dataloaders['train'], dataloaders['val'])
+    trainer.fit(lit_model, dataloaders['train'], dataloaders['val'], ckpt_path=checkpoint_path)
 
 
 if __name__ == "__main__":

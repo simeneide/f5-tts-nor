@@ -17,7 +17,7 @@ mel_spec_type = "vocos"  # 'vocos' or 'bigvgan'
 
 tokenizer = "pinyin"  # 'pinyin', 'char', or 'custom'
 tokenizer_path = None  # if tokenizer = 'custom', define the path to the tokenizer you want to use (should be vocab.txt)
-dataset_name = "Emilia_ZH_EN"
+dataset_name = "podcast"
 
 # -------------------------- Training Settings -------------------------- #
 
@@ -31,10 +31,10 @@ max_samples = 64  # max sequences per batch if use frame-wise batch_size. we set
 grad_accumulation_steps = 1  # note: updates = steps / grad_accumulation_steps
 max_grad_norm = 1.0
 
-epochs = 11  # use linear decay, thus epochs control the slope
-num_warmup_updates = 20000  # warmup steps
-save_per_updates = 50000  # save checkpoint per steps
-last_per_steps = 5000  # save last checkpoint per steps
+epochs = 1000  # use linear decay, thus epochs control the slope
+num_warmup_updates = 10000  # warmup steps
+save_per_updates = 10000  # save checkpoint per steps
+last_per_steps = 20000  # save last checkpoint per steps
 
 # model params
 if exp_name == "F5TTS_Base":
@@ -96,8 +96,41 @@ def main():
     trainer.train(
         train_dataset,
         resumable_with_seed=666,  # seed for shuffling dataset
+        num_workers=8
     )
 
 
 if __name__ == "__main__":
-    main()
+    main(
+
+"""
+from f5_tts.model import *
+self = trainer
+resumable_with_seed=666
+"""
+
+"""
+ds =train_dataset.data
+example = ds[0]
+
+ds.map(lambda example: {})
+
+len(example['text'])
+example['audio_path']
+len(train_dataset.data)
+example.keys()
+
+import torchaudio
+def process_audio(example):
+    audio, sample_rate = torchaudio.load(f"/root/skrivtesnakk/{example['audio_path']}")
+    return {'audio_len0' : len(audio),'audio_len1' : len(audio[0]), 'sample_rate' : sample_rate, 'text_len' : len(example['text'])}
+
+ds1 = ds.map(process_audio, num_proc=16)
+
+import matplotlib.pyplot as plt
+min(ds1['audio_len0'])
+plt.hist(ds1['audio_len1'])
+plt.plot(ds1['audio_len1'], ds1['text_len'], "o")
+
+
+"""

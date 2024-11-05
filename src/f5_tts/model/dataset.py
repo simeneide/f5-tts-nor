@@ -136,7 +136,8 @@ class CustomDataset(Dataset):
             mel_spec = torch.tensor(row["mel_spec"])
 
         else:
-            audio, source_sample_rate = torchaudio.load(audio_path)
+            skrivispath = "/root/workdir/skrivtesnakk"
+            audio, source_sample_rate = torchaudio.load(f"{skrivispath}/{audio_path}")
             if audio.shape[0] > 1:
                 audio = torch.mean(audio, dim=0, keepdim=True)
 
@@ -223,7 +224,7 @@ class DynamicBatchSampler(Sampler[list[int]]):
 
 # Load dataset
 
-
+from sklearn.model_selection import train_test_split
 def load_dataset(
     dataset_name: str,
     tokenizer: str = "pinyin",
@@ -253,38 +254,57 @@ def load_dataset(
         with open(f"{rel_data_path}/duration.json", "r", encoding="utf-8") as f:
             data_dict = json.load(f)
         durations = data_dict["duration"]
+
+
+        # Split dataset into train and val
+        train_indices, val_indices = train_test_split(
+            range(len(train_dataset)), test_size=0.02, random_state=42
+        )
+        train_dataset_split = train_dataset.select(train_indices)
+        val_dataset_split = train_dataset.select(val_indices)
+
+        # Create CustomDataset instances for both training and validation
         train_dataset = CustomDataset(
-            train_dataset,
-            durations=durations,
+            train_dataset_split,
+            durations=[durations[i] for i in train_indices],
             preprocessed_mel=preprocessed_mel,
             mel_spec_module=mel_spec_module,
             **mel_spec_kwargs,
         )
-
-    elif dataset_type == "CustomDatasetPath":
-        try:
-            train_dataset = load_from_disk(f"{dataset_name}/raw")
-        except:  # noqa: E722
-            train_dataset = Dataset_.from_file(f"{dataset_name}/raw.arrow")
-
-        with open(f"{dataset_name}/duration.json", "r", encoding="utf-8") as f:
-            data_dict = json.load(f)
-        durations = data_dict["duration"]
-        train_dataset = CustomDataset(
-            train_dataset, durations=durations, preprocessed_mel=preprocessed_mel, **mel_spec_kwargs
+        
+        val_dataset = CustomDataset(
+            val_dataset_split,
+            durations=[durations[i] for i in val_indices],
+            preprocessed_mel=preprocessed_mel,
+            mel_spec_module=mel_spec_module,
+            **mel_spec_kwargs,
         )
+    else:
+        Warning("Not implmeneted anything else that CustomDataset")
+    # elif dataset_type == "CustomDatasetPath":
+    #     try:
+    #         train_dataset = load_from_disk(f"{dataset_name}/raw")
+    #     except:  # noqa: E722
+    #         train_dataset = Dataset_.from_file(f"{dataset_name}/raw.arrow")
 
-    elif dataset_type == "HFDataset":
-        print(
-            "Should manually modify the path of huggingface dataset to your need.\n"
-            + "May also the corresponding script cuz different dataset may have different format."
-        )
-        pre, post = dataset_name.split("_")
-        train_dataset = HFDataset(
-            load_dataset(f"{pre}/{pre}", split=f"train.{post}", cache_dir=str(files("f5_tts").joinpath("../../data"))),
-        )
+    #     with open(f"{dataset_name}/duration.json", "r", encoding="utf-8") as f:
+    #         data_dict = json.load(f)
+    #     durations = data_dict["duration"]
+    #     train_dataset = CustomDataset(
+    #         train_dataset, durations=durations, preprocessed_mel=preprocessed_mel, **mel_spec_kwargs
+    #     )
 
-    return train_dataset
+    # elif dataset_type == "HFDataset":
+    #     print(
+    #         "Should manually modify the path of huggingface dataset to your need.\n"
+    #         + "May also the corresponding script cuz different dataset may have different format."
+    #     )
+    #     pre, post = dataset_name.split("_")
+    #     train_dataset = HFDataset(
+    #         load_dataset(f"{pre}/{pre}", split=f"train.{post}", cache_dir=str(files("f5_tts").joinpath("../../data"))),
+    #     )
+
+    return train_dataset, val_dataset
 
 
 # collation

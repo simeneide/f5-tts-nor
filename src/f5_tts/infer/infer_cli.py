@@ -109,7 +109,7 @@ ckpt_file = args.ckpt_file if args.ckpt_file else ""
 vocab_file = args.vocab_file if args.vocab_file else ""
 remove_silence = args.remove_silence if args.remove_silence else config["remove_silence"]
 speed = args.speed
-wave_path = Path(output_dir) / "infer_cli_out.wav"
+wave_path = Path(output_dir) / f"{ckpt_file.split('/')[-1].split('.')[0]}.wav"
 # spectrogram_path = Path(output_dir) / "infer_cli_out.png"
 if args.vocoder_name == "vocos":
     vocoder_local_path = "../checkpoints/vocos-mel-24khz"

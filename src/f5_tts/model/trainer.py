@@ -149,7 +149,9 @@ class Trainer:
             not exists(self.checkpoint_path)
             or not os.path.exists(self.checkpoint_path)
             or not os.listdir(self.checkpoint_path)
+            or not any(file.endswith('.pt') for file in os.listdir(self.checkpoint_path))
         ):
+            print("Initializing new model.")
             return 0
 
         self.accelerator.wait_for_everyone()
@@ -161,6 +163,7 @@ class Trainer:
                 key=lambda x: int("".join(filter(str.isdigit, x))),
             )[-1]
         # checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", map_location=self.accelerator.device)  # rather use accelerator.load_state ಥ_ಥ
+        print(f"Loading model from checkpoint {last_checkpoint}")
         checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu")
 
         # patch for backward compatibility, 305e3ea
@@ -283,12 +286,21 @@ class Trainer:
                     unit="step",
                     disable=not self.accelerator.is_local_main_process,
                 )
-
+            biggest_s = 0
             for batch in progress_bar:
                 with self.accelerator.accumulate(self.model):
                     text_inputs = batch["text"]
                     mel_spec = batch["mel"].permute(0, 2, 1)
                     mel_lengths = batch["mel_lengths"]
+
+                    # Check that the batch size is reasonable and wont go OOM:
+                    bs, l, h = mel_spec.size()
+                    s = bs*l
+                    #biggest_s = max(s,biggest_s)
+                    #print(s,biggest_s)
+                    if s > 50000:
+                        print(f"found big mel spectogram (bs={bs},l={l} = {bs*l}), skipping to avoid oom!")
+                        continue
 
                     # TODO. add duration predictor training
                     if self.duration_predictor is not None and self.accelerator.is_local_main_process:
