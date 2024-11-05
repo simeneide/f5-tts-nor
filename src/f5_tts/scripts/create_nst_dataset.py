@@ -7,10 +7,6 @@ import torch.nn.functional as F
 import shutil
 import argparse
 
-def create_directories():
-    """Create necessary directories if they don't exist"""
-    Path("/mnt/llm/datasets/nst_ostlandsk/wavs").mkdir(parents=True, exist_ok=True)
-
 def load_metadata(directory):
     """Load metadata from json files"""
     directory = Path(directory)
