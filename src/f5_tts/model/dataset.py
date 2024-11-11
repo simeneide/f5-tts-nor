@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from f5_tts.model.modules import MelSpec
 from f5_tts.model.utils import default
-
+import numpy as np
 
 class HFDataset(Dataset):
     def __init__(
@@ -49,8 +49,9 @@ class HFDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, index):
+        # index=0
         row = self.data[index]
-        audio = row["audio"]["array"]
+        audio = np.array(row["audio"]["array"])
 
         # logger.info(f"Audio shape: {audio.shape}")
 
@@ -226,7 +227,7 @@ class DynamicBatchSampler(Sampler[list[int]]):
 
 from sklearn.model_selection import train_test_split
 def load_dataset(
-    dataset_name: str,
+    dataset_path: str,
     tokenizer: str = "pinyin",
     dataset_type: str = "CustomDataset",
     audio_type: str = "raw",
